@@ -14,6 +14,8 @@ from .nuscnes_eval import NuScenesEval_custom
 from projects.mmdet3d_plugin.models.utils.visual import save_tensor
 from mmcv.parallel import DataContainer as DC
 import random
+from torch.utils.data import Dataset
+from .pipelines import Compose
 
 from .nuscenes_dataset import CustomNuScenesDataset
 from nuscenes.map_expansion.map_api import NuScenesMap, NuScenesMapExplorer
@@ -488,7 +490,6 @@ class LiDARInstanceLines(object):
         return instances_tensor
 
 
-
 class VectorizedLocalMap(object):
     CLASS2LABEL = {
         'road_divider': 0,
@@ -794,7 +795,7 @@ class VectorizedLocalMap(object):
                                                       origin=(patch_x, patch_y), use_radians=False)
                         new_polygon = affinity.affine_transform(new_polygon,
                                                                 [1.0, 0.0, 0.0, 1.0, -patch_x, -patch_y])
-                        if new_polygon.geom_type is 'Polygon':
+                        if new_polygon.geom_type == 'Polygon':
                             new_polygon = MultiPolygon([new_polygon])
                         polygon_list.append(new_polygon)
 
@@ -809,7 +810,7 @@ class VectorizedLocalMap(object):
                                                       origin=(patch_x, patch_y), use_radians=False)
                         new_polygon = affinity.affine_transform(new_polygon,
                                                                 [1.0, 0.0, 0.0, 1.0, -patch_x, -patch_y])
-                        if new_polygon.geom_type is 'Polygon':
+                        if new_polygon.geom_type == 'Polygon':
                             new_polygon = MultiPolygon([new_polygon])
                         polygon_list.append(new_polygon)
 
@@ -819,7 +820,7 @@ class VectorizedLocalMap(object):
         if layer_name not in self.map_explorer[location].map_api.non_geometric_line_layers:
             raise ValueError("{} is not a line layer".format(layer_name))
 
-        if layer_name is 'traffic_light':
+        if layer_name == 'traffic_light':
             return None
 
         patch_x = patch_box[0]
@@ -860,7 +861,7 @@ class VectorizedLocalMap(object):
                                                       origin=(patch_x, patch_y), use_radians=False)
                     new_polygon = affinity.affine_transform(new_polygon,
                                                             [1.0, 0.0, 0.0, 1.0, -patch_x, -patch_y])
-                    if new_polygon.geom_type is 'Polygon':
+                    if new_polygon.geom_type == 'Polygon':
                         new_polygon = MultiPolygon([new_polygon])
                     polygon_list.append(new_polygon)
 
@@ -895,6 +896,228 @@ class VectorizedLocalMap(object):
 
         return sampled_points, num_valid
 
+@DATASETS.register_module()
+class BevFusionMapDataset(Dataset):
+    MAPCLASSES = ('divider',)
+    def __init__(self,
+                 root_dir = None,
+                 queue_length=4, 
+                 bev_size=(200, 200),
+                 pc_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
+                 filter_empty_gt = True,
+                 fixed_ptsnum_per_line = -1,
+                 padding_value = -10000,
+                 pipeline=None,
+                 test_mode = False,
+                 *args, 
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.CLASSES = ('car', 'truck', 'trailer', 'bus', 'construction_vehicle',
+               'bicycle', 'motorcycle', 'pedestrian', 'traffic_cone',
+               'barrier')
+        self.filter_empty_gt = filter_empty_gt
+        self.test_mode = test_mode
+        self.root_dir = root_dir
+        self.queue_length = queue_length    
+        self.fixed_num = fixed_ptsnum_per_line
+        self.data_infos = self.load_train_file_info()
+        self.padding_value = padding_value
+        patch_h = pc_range[4]-pc_range[1]
+        patch_w = pc_range[3]-pc_range[0]
+        self.patch_size = (patch_h, patch_w)
+
+        if pipeline is not None:
+            self.pipeline = Compose(pipeline)
+        self._set_group_flag()
+
+    def _set_group_flag(self):
+        """Set flag according to image aspect ratio.
+
+        Images with aspect ratio greater than 1 will be set as group 1,
+        otherwise group 0. In 3D datasets, they are all the same, thus are all
+        zeros.
+        """
+        self.flag = np.zeros(len(self), dtype=np.uint8)
+
+    def load_train_file_info(self):
+        ret = []
+        for bag_md5 in os.listdir(self.root_dir):
+            bag_train_info_path = f'{self.root_dir}/{bag_md5}/train_info.json'
+            with open(bag_train_info_path) as f:
+                bag_train_info = json.load(f)
+
+            for meta in bag_train_info:
+                single_meta = {
+                    "model_input_map1": [],
+                    "model_input_map2": [],
+                    "model_output_map": [],
+                    "meta": meta['meta']
+                }
+                for key in ['model_input_map1', 'model_input_map2', 'model_output_map']:
+                # for key, value in meta.items():
+                    value = meta[key]
+                    single_meta[key] = []
+                    for lane_center in value['lane_center']:
+                        new_line_points = [[-pt[1], pt[0]] for pt in lane_center['points']]
+                        single_meta[key].append(
+                            {
+                                "type": "lane_center",
+                                "points": new_line_points,
+                                "id": lane_center['id']
+                            }
+                        )
+                    for road_border in value['road_border']:
+                        new_line_points = [[-pt[1], pt[0]] for pt in road_border['points']]
+                        single_meta[key].append(
+                            {
+                                "type": "road_border",
+                                "points": new_line_points,
+                                "id": road_border['id']
+                            }
+                        )
+                    for lane_border in value['lane_border']:
+                        new_line_points = [[-pt[1], pt[0]] for pt in lane_border['points']]
+                        single_meta[key].append(
+                            {
+                                "type": "lane_border",
+                                "points": new_line_points,
+                                "id": lane_border['id']
+                            }
+                        )
+                ret.append(single_meta)   
+        return ret
+    
+    def gen_vectorized_samples(self, input_dict):
+        CLASS2LABEL = {
+            'road_border': 0,
+            'lane_border': 1,
+            'lane_center': 2,
+            'others': -1
+        }
+        sample_dist = 1
+        num_samples = 250
+        padding = False
+        
+        vectors = []
+        for line_instance in input_dict['model_output_map']:
+            line_type = line_instance['type']
+            line_points = line_instance['points']
+            
+            
+            linestring_2d= LineString([[pt[0], pt[1]] for pt in line_points])
+            vectors.append((linestring_2d, CLASS2LABEL.get(line_type, -1)))
+
+        gt_labels = []
+        gt_instance = []
+        for instance, type in vectors:
+            if type != -1:
+                gt_instance.append(instance)
+                gt_labels.append(type)
+        
+        gt_instance = LiDARInstanceLines(gt_instance, sample_dist, num_samples, padding, self.fixed_num, 
+                                         self.padding_value, patch_size=self.patch_size)
+
+        anns_results = dict(
+            gt_vecs_pts_loc=gt_instance,
+            gt_vecs_label=gt_labels,
+
+        )
+        return anns_results
+        
+    def vectormap_pipeline(self, example, input_dict):
+        anns_results = self.gen_vectorized_samples(input_dict)
+
+        gt_vecs_label = to_tensor(anns_results['gt_vecs_label'])
+        if isinstance(anns_results['gt_vecs_pts_loc'], LiDARInstanceLines):
+            gt_vecs_pts_loc = anns_results['gt_vecs_pts_loc']
+        else:
+            gt_vecs_pts_loc = to_tensor(anns_results['gt_vecs_pts_loc'])
+            try:
+                gt_vecs_pts_loc = gt_vecs_pts_loc.flatten(1).to(dtype=torch.float32)
+            except:
+                # empty tensor, will be passed in train, 
+                # but we preserve it for test
+                gt_vecs_pts_loc = gt_vecs_pts_loc
+        example['gt_labels_3d'] = DC(gt_vecs_label, cpu_only=False)
+        example['gt_bboxes_3d'] = DC(gt_vecs_pts_loc, cpu_only=True)
+        return example
+    
+    def prepare_test_data(self, index):
+        input_dict = self.get_data_info(index)
+        if input_dict is None:
+            return None
+        example = self.pipeline(input_dict)
+        example = self.vectormap_pipeline(example, input_dict)
+        return example
+    
+    def prepare_train_data(self, index):
+        """
+        Training data preparation.
+        Args:
+            index (int): Index for accessing the target data.
+        Returns:
+            dict: Training data dict of the corresponding index.
+        """
+        queue = []
+
+        index_list = list(range(index-self.queue_length, index))
+        random.shuffle(index_list)
+        index_list = sorted(index_list[1:])
+        index_list.append(index)
+
+        for i in index_list:
+            i = max(0, i)
+            input_dict = self.get_data_info(i)
+            if input_dict is None:
+                return None
+            example = self.pipeline(input_dict)
+            example = self.vectormap_pipeline(example, input_dict)
+            if self.filter_empty_gt and \
+                    (example is None or ~(example['gt_labels_3d']._data != -1).any()):
+                return None
+            queue.append(example)
+        return self.union2one(queue)
+
+    def union2one(self, queue):
+        metas_map = {}
+        for i, each in enumerate(queue):
+            metas_map[i] = DC(each['meta'].data)
+        queue[-1]['meta'] = DC(metas_map, cpu_only=True)
+        queue = queue[-1]
+        return queue
+
+    def get_data_info(self, index):
+        """Get data info according to the given index.
+        Args:
+            index (int): Index of the sample data to get.
+        """
+        info = self.data_infos[index]
+        # standard protocal modified from SECOND.Pytorch
+        input_dict = dict(
+            model_input_map1=info['model_input_map1'],
+            model_input_map2=info['model_input_map2'],
+            model_output_map=info['model_output_map'],
+            meta = info['meta']
+        )
+        return input_dict
+    
+    def __getitem__(self, idx):
+        """Get item from infos according to the given index.
+        Returns:
+            dict: Data dictionary of the corresponding index.
+        """
+        if self.test_mode:
+            return self.prepare_test_data(idx)
+        while True:
+            data = self.prepare_train_data(idx)
+            return data
+    def __len__(self):
+        """Return the length of data infos.
+
+        Returns:
+            int: Length of data infos.
+        """
+        return len(self.data_infos)
 
 @DATASETS.register_module()
 class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):

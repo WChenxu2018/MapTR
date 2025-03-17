@@ -3,7 +3,8 @@ from numpy import random
 import mmcv
 from mmdet.datasets.builder import PIPELINES
 from mmcv.parallel import DataContainer as DC
-
+from shapely.geometry import LineString, box, MultiPolygon, MultiLineString
+import torch
 @PIPELINES.register_module()
 class PadMultiViewImage(object):
     """Pad the multi-view image.
@@ -329,6 +330,62 @@ class RandomScaleImageMultiViewImage(object):
         repr_str += f'(size={self.scales}, '
         return repr_str
 
+@PIPELINES.register_module()
+class LoadMapFile(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, results):
+        """Call function to collect keys in results. The keys in ``meta_keys``
+        will be converted to :obj:`mmcv.DataContainer`.
+        Args:
+            results (dict): Result dict contains the data to collect.
+        Returns:
+            dict: The result dict contains the following keys
+                - keys in ``self.keys``
+                - ``img_metas``
+        """
+
+        ret = {}
+        ret['model_input_map1'], ret['model_input_map1_mask'] = self.convert_lines_to_tensor(results['model_input_map1'])
+        ret['model_input_map2'], ret['model_input_map2_mask'] = self.convert_lines_to_tensor(results['model_input_map2'])
+        ret['meta'] = DC(results['meta'])
+        return ret
+        
+    def convert_lines_to_tensor(self, results):
+        # 初始化维度为 [30, 20, 5] 的数据张量
+        tensor = torch.zeros((30, 20, 5), dtype=torch.float32)
+        
+        # 初始化与数据张量相同大小的掩码张量
+        mask = torch.zeros((30, 20), dtype=torch.float32)  # 掩码只有前两个维度
+        
+        CLASS2LABEL = {
+            'road_border': 0,
+            'lane_border': 1,
+            'lane_center': 2,
+            'others': -1
+        }
+        for i, line in enumerate(results[:30]):  # 限制最多30条线
+            points = line['points']
+            line_type = line['type']
+            line_class = CLASS2LABEL.get(line_type, -1)
+
+            num_points = min(len(points) - 1, 20)  # 最多支持20个点，并且要至少有两个点来确定线段
+            
+            for j in range(num_points):
+                start_point = points[j]
+                end_point = points[j + 1]
+                
+                tensor[i, j, 0] = start_point[0]  # 起始点 x
+                tensor[i, j, 1] = start_point[1]  # 起始点 y
+                tensor[i, j, 2] = end_point[0]    # 终止点 x
+                tensor[i, j, 3] = end_point[1]    # 终止点 y
+                tensor[i, j, 4] = line_class      # 线的类别
+                
+                # 对应位置设置掩码值为1，表示这是有效数据
+                mask[i, j] = 1.0
+        
+        return tensor, mask
 
 @PIPELINES.register_module()
 class CustomPointsRangeFilter:

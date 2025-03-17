@@ -18,9 +18,9 @@ class MapTRDecoder(TransformerLayerSequence):
         self.fp16_enabled = False
 
     def forward(self,
-                query,
+                query, #torch.Size([1000, 4, 256])
                 *args,
-                reference_points=None,
+                reference_points=None, #torch.Size([4, 1000, 2])
                 reg_branches=None,
                 key_padding_mask=None,
                 **kwargs):
@@ -78,7 +78,7 @@ class MapTRDecoder(TransformerLayerSequence):
 
         if self.return_intermediate:
             return torch.stack(intermediate), torch.stack(
-                intermediate_reference_points)
+                intermediate_reference_points) #torch.Size([6, 1000, 4, 256]) torch.Size([6, 4, 1000, 2])
 
         return output, reference_points
 

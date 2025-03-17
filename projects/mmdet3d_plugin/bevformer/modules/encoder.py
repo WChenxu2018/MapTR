@@ -211,8 +211,8 @@ class BEVFormerEncoder(TransformerLayerSequence):
 
         for lid, layer in enumerate(self.layers):
             output = layer(
-                bev_query,
-                key,
+                bev_query, #torch.Size([4, 20000, 256])
+                key, #torch.Size([6, 375, 4, 256])
                 value,
                 *args,
                 bev_pos=bev_pos,

@@ -4,8 +4,6 @@ import os
 import shutil
 import torch
 import warnings
-import sys
-sys.path.insert(0, '/mnt/data/project/MapTR')
 from mmcv import Config, DictAction
 from mmcv.cnn import fuse_conv_bn
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
@@ -74,7 +72,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='vis hdmaptr map gt label')
     parser.add_argument('config', help='test config file path')
     parser.add_argument('checkpoint', help='checkpoint file')
-    parser.add_argument('--score-thresh', default=0.4, type=float, help='samples to visualize')
+    parser.add_argument('--score-thresh', default=0.2, type=float, help='samples to visualize')
     parser.add_argument(
         '--show-dir', help='directory where visualizations will be saved')
     parser.add_argument('--show-cam', action='store_true', help='show camera pic')
@@ -96,25 +94,16 @@ def main():
     if hasattr(cfg, 'plugin'):
         if cfg.plugin:
             import importlib
-            if hasattr(cfg, 'plugin_dir'):
-                plugin_dir = cfg.plugin_dir
-                _module_dir = os.path.dirname(plugin_dir)
-                _module_dir = _module_dir.split('/')
-                _module_path = _module_dir[0]
+            plugin_dir = cfg.plugin_dir
+            _module_dir = os.path.dirname(plugin_dir)
+            _module_dir = _module_dir.split('/')
+            _module_path = _module_dir[0]
 
-                for m in _module_dir[1:]:
-                    _module_path = _module_path + '.' + m
-                print(_module_path)
-                plg_lib = importlib.import_module(_module_path)
-            else:
-                # import dir is the dirpath for the config file
-                _module_dir = os.path.dirname(args.config)
-                _module_dir = _module_dir.split('/')
-                _module_path = _module_dir[0]
-                for m in _module_dir[1:]:
-                    _module_path = _module_path + '.' + m
-                print(_module_path)
-                plg_lib = importlib.import_module(_module_path)
+            for m in _module_dir[1:]:
+                _module_path = _module_path + '.' + m
+            print(_module_path)
+            plg_lib = importlib.import_module(_module_path)
+
 
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
@@ -187,12 +176,6 @@ def main():
     model = MMDataParallel(model, device_ids=[0])
     model.eval()
 
-    img_norm_cfg = cfg.img_norm_cfg
-
-    # get denormalized param
-    mean = np.array(img_norm_cfg['mean'],dtype=np.float32)
-    std = np.array(img_norm_cfg['std'],dtype=np.float32)
-    to_bgr = img_norm_cfg['to_rgb']
 
     # get pc_range
     pc_range = cfg.point_cloud_range
@@ -201,17 +184,18 @@ def main():
     car_img = Image.open('./figs/lidar_car.png')
 
     # get color map: divider->r, ped->b, boundary->g
-    colors_plt = ['orange', 'b', 'g']
+    colors_plt = ['#FFA500', 'black', '#1E90FF']
 
+    CLASS2LABEL = {
+        'road_border': 0,
+        'lane_border': 1,
+        'lane_center': 2,
+        'others': -1
+    }
 
     logger.info('BEGIN vis test dataset samples gt label & pred')
 
-
-
-    bbox_results = []
-    mask_results = []
     dataset = data_loader.dataset
-    have_mask = False
     # prog_bar = mmcv.ProgressBar(len(CANDIDATE))
     prog_bar = mmcv.ProgressBar(len(dataset))
     # import pdb;pdb.set_trace()
@@ -222,133 +206,110 @@ def main():
             # prog_bar.update()  
             continue
        
-        
-        img = data['img'][0].data[0]
-        img_metas = data['img_metas'][0].data[0]
+        metas = data['meta'].data[0]
         gt_bboxes_3d = data['gt_bboxes_3d'].data[0]
         gt_labels_3d = data['gt_labels_3d'].data[0]
 
-        pts_filename = img_metas[0]['pts_filename']
-        pts_filename = osp.basename(pts_filename)
-        pts_filename = pts_filename.replace('__LIDAR_TOP__', '_').split('.')[0]
-        # import pdb;pdb.set_trace()
-        # if pts_filename not in CANDIDATE:
-        #     continue
+        timestamp = metas[0]['timestamp']
+        bag_md5 = metas[0]['bag_md5']
+        map1_timestamp = metas[0]['map1_timestamp']
+        map2_timestamp = metas[0]['map2_timestamp']
 
-        with torch.no_grad():
-            result = model(return_loss=False, rescale=True, **data)
-        sample_dir = osp.join(args.show_dir, pts_filename)
-        mmcv.mkdir_or_exist(osp.abspath(sample_dir))
-
-        filename_list = img_metas[0]['filename']
-        img_path_dict = {}
-        # save cam img for sample
-        for filepath in filename_list:
-            filename = osp.basename(filepath)
-            filename_splits = filename.split('__')
-            # sample_dir = filename_splits[0]
-            # sample_dir = osp.join(args.show_dir, sample_dir)
-            # mmcv.mkdir_or_exist(osp.abspath(sample_dir))
-            img_name = filename_splits[1] + '.jpg'
-            img_path = osp.join(sample_dir,img_name)
-            # img_path_list.append(img_path)
-            shutil.copyfile(filepath,img_path)
-            img_path_dict[filename_splits[1]] = img_path
-         
-        # surrounding view
-        row_1_list = []
-        for cam in CAMS[:3]:
-            cam_img_name = cam + '.jpg'
-            cam_img = cv2.imread(osp.join(sample_dir, cam_img_name))
-            row_1_list.append(cam_img)
-        row_2_list = []
-        for cam in CAMS[3:]:
-            cam_img_name = cam + '.jpg'
-            cam_img = cv2.imread(osp.join(sample_dir, cam_img_name))
-            row_2_list.append(cam_img)
-        row_1_img=cv2.hconcat(row_1_list)
-        row_2_img=cv2.hconcat(row_2_list)
-        cams_img = cv2.vconcat([row_1_img,row_2_img])
-        cams_img_path = osp.join(sample_dir,'surroud_view.jpg')
-        cv2.imwrite(cams_img_path, cams_img,[cv2.IMWRITE_JPEG_QUALITY, 70])
+        # import pickle
+        # with open(f'test.pkl', 'wb') as f:
+        #     pickle.dump(data, f)
         
-        for vis_format in args.gt_format:
-            if vis_format == 'se_pts':
-                gt_line_points = gt_bboxes_3d[0].start_end_points
-                for gt_bbox_3d, gt_label_3d in zip(gt_line_points, gt_labels_3d[0]):
-                    pts = gt_bbox_3d.reshape(-1,2).numpy()
-                    x = np.array([pt[0] for pt in pts])
-                    y = np.array([pt[1] for pt in pts])
-                    plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[gt_label_3d])
-            elif vis_format == 'bbox':
-                gt_lines_bbox = gt_bboxes_3d[0].bbox
-                for gt_bbox_3d, gt_label_3d in zip(gt_lines_bbox, gt_labels_3d[0]):
-                    gt_bbox_3d = gt_bbox_3d.numpy()
-                    xy = (gt_bbox_3d[0],gt_bbox_3d[1])
-                    width = gt_bbox_3d[2] - gt_bbox_3d[0]
-                    height = gt_bbox_3d[3] - gt_bbox_3d[1]
-                    # import pdb;pdb.set_trace()
-                    plt.gca().add_patch(Rectangle(xy,width,height,linewidth=0.4,edgecolor=colors_plt[gt_label_3d],facecolor='none'))
-                    # plt.Rectangle(xy, width, height,color=colors_plt[gt_label_3d])
-                # continue
-            elif vis_format == 'fixed_num_pts':
-                plt.figure(figsize=(2, 4))
-                plt.xlim(pc_range[0], pc_range[3])
-                plt.ylim(pc_range[1], pc_range[4])
-                plt.axis('off')
-                # gt_bboxes_3d[0].fixed_num=30 #TODO, this is a hack
-                gt_lines_fixed_num_pts = gt_bboxes_3d[0].fixed_num_sampled_points
-                for gt_bbox_3d, gt_label_3d in zip(gt_lines_fixed_num_pts, gt_labels_3d[0]):
-                    # import pdb;pdb.set_trace() 
-                    pts = gt_bbox_3d.numpy()
-                    x = np.array([pt[0] for pt in pts])
-                    y = np.array([pt[1] for pt in pts])
-                    # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[gt_label_3d])
+        with torch.no_grad():
+            result = model(return_loss=False, model_input_map1 = data['model_input_map1'],
+                           model_input_map2 = data['model_input_map2'], 
+                           model_input_map1_mask = data['model_input_map1_mask'],
+                           model_input_map2_mask = data['model_input_map2_mask'])
+        sample_dir = osp.join(args.show_dir, bag_md5, str(timestamp))
+        mmcv.mkdir_or_exist(osp.abspath(sample_dir))
+        fig, axs = plt.subplots(1, 5, figsize=(20, 5), gridspec_kw={'width_ratios': [1, 4, 4, 4, 4]})
 
-                    
-                    plt.plot(x, y, color=colors_plt[gt_label_3d],linewidth=1,alpha=0.8,zorder=-1)
-                    plt.scatter(x, y, color=colors_plt[gt_label_3d],s=2,alpha=0.8,zorder=-1)
-                    # plt.plot(x, y, color=colors_plt[gt_label_3d])
-                    # plt.scatter(x, y, color=colors_plt[gt_label_3d],s=1)
-                plt.imshow(car_img, extent=[-1.2, 1.2, -1.5, 1.5])
+        # 坐标轴设置
+        ax = axs[0]
+        start, end = -20, 40  # y 轴范围
+        ax.plot([0, 0], [start, end], 'k-', lw=2)  # 绘制主刻度线
 
-                gt_fixedpts_map_path = osp.join(sample_dir, 'GT_fixednum_pts_MAP.png')
-                plt.savefig(gt_fixedpts_map_path, bbox_inches='tight', format='png',dpi=1200)
-                plt.close()   
-            elif vis_format == 'polyline_pts':
-                plt.figure(figsize=(2, 4))
-                plt.xlim(pc_range[0], pc_range[3])
-                plt.ylim(pc_range[1], pc_range[4])
-                plt.axis('off')
-                gt_lines_instance = gt_bboxes_3d[0].instance_list
-                # import pdb;pdb.set_trace()
-                for gt_line_instance, gt_label_3d in zip(gt_lines_instance, gt_labels_3d[0]):
-                    pts = np.array(list(gt_line_instance.coords))
-                    x = np.array([pt[0] for pt in pts])
-                    y = np.array([pt[1] for pt in pts])
-                    
-                    # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[gt_label_3d])
+        # 标记刻度
+        for i in range(start, end + 1, 10):
+            ax.plot([-0.2, 0.2], [i, i], 'k-')  # 绘制刻度线
+            ax.text(-1, i, f'{i}m', ha='right', va='center')  # 绘制刻度标签
 
-                    # plt.plot(x, y, color=colors_plt[gt_label_3d])
-                    plt.plot(x, y, color=colors_plt[gt_label_3d],linewidth=1,alpha=0.8,zorder=-1)
-                    plt.scatter(x, y, color=colors_plt[gt_label_3d],s=1,alpha=0.8,zorder=-1)
-                plt.imshow(car_img, extent=[-1.2, 1.2, -1.5, 1.5])
+        ax.set_xlim(-1, 1)
+        ax.axis('off')
+        # 输入图像1
+        ax = axs[1]
+        for line_index in range(0, data['model_input_map1'].shape[1]):
+            xs = []
+            ys = []
+            line_type = -1
+            for vector_index in range(0, data['model_input_map1'].shape[2]):
+                if data['model_input_map1_mask'][0][line_index][vector_index] == 0:
+                    continue
+                x_point = data['model_input_map1'][0][line_index][vector_index][0].item()
+                y_point = data['model_input_map1'][0][line_index][vector_index][1].item()
+                line_type = int(data['model_input_map1'][0][line_index][vector_index][4].item())
+                xs.append(x_point)
+                ys.append(y_point)
+            if len(xs) == 0:
+                continue
+            xs = np.array(xs)
+            ys = np.array(ys)
+            ax.plot(xs, ys, color=colors_plt[line_type], linewidth=1, alpha=0.8, zorder=-1)
+            ax.scatter(xs, ys, color=colors_plt[line_type], s=10, alpha=0.8, zorder=-1)
+        ax.set_title(f'Input Image 1 {timestamp}')
+        ax.axis('off')
 
-                gt_polyline_map_path = osp.join(sample_dir, 'GT_polyline_pts_MAP.png')
-                plt.savefig(gt_polyline_map_path, bbox_inches='tight', format='png',dpi=1200)
-                plt.close()           
+        # 输入图像2
+        ax = axs[2]
+        debug_info = []
+        for line_index in range(0, data['model_input_map2'].shape[1]):
+            xs = []
+            ys = []
+            for vector_index in range(0, data['model_input_map2'].shape[2]):
+                if data['model_input_map2_mask'][0][line_index][vector_index] == 0:
+                    continue
+                x_point = data['model_input_map2'][0][line_index][vector_index][0].item()
+                y_point = data['model_input_map2'][0][line_index][vector_index][1].item()
+                line_type = int(data['model_input_map2'][0][line_index][vector_index][4].item())
+                xs.append(x_point)
+                ys.append(y_point)
+            if len(xs) == 0:
+                continue
+            debug_info.append({
+                "type": line_type,
+                "xs": xs,
+                "ys": ys
+            })
+            xs = np.array(xs)
+            ys = np.array(ys)
+            ax.plot(xs, ys, color=colors_plt[line_type], linewidth=1, alpha=0.8, zorder=-1)
+            ax.scatter(xs, ys, color=colors_plt[line_type], s=10, alpha=0.8, zorder=-1)
+        ax.set_title('Input Image 2')
+        ax.axis('off')
+        import json
+        with open("test.json", 'w') as fout:
+            json.dump(debug_info, fout, indent=4)
 
-            else: 
-                logger.error(f'WRONG visformat for GT: {vis_format}')
-                raise ValueError(f'WRONG visformat for GT: {vis_format}')
+        ax = axs[3]
+        # gt_bboxes_3d[0].fixed_num=30 #TODO, this is a hack
+        gt_lines_fixed_num_pts = gt_bboxes_3d[0].fixed_num_sampled_points
+        for gt_bbox_3d, gt_label_3d in zip(gt_lines_fixed_num_pts, gt_labels_3d[0]):
+            # import pdb;pdb.set_trace() 
+            pts = gt_bbox_3d.numpy()
+            x = np.array([pt[0] for pt in pts])
+            y = np.array([pt[1] for pt in pts])
+            ax.plot(x, y, color=colors_plt[gt_label_3d],linewidth=1,alpha=0.8,zorder=-1)
+            ax.scatter(x, y, color=colors_plt[gt_label_3d],s=0.1,alpha=0.8,zorder=-1)
+            # plt.plot(x, y, color=colors_plt[gt_label_3d])
+            # plt.scatter(x, y, color=colors_plt[gt_label_3d],s=1)
+        ax.set_title('Ground Truth')
+        ax.axis('off')
 
-
-        # import pdb;pdb.set_trace()
-        plt.figure(figsize=(2, 4))
-        plt.xlim(pc_range[0], pc_range[3])
-        plt.ylim(pc_range[1], pc_range[4])
-        plt.axis('off')
-
+        ax = axs[4]
         # visualize pred
         # import pdb;pdb.set_trace()
         result_dic = result[0]['pts_bbox']
@@ -357,37 +318,28 @@ def main():
         labels_3d = result_dic['labels_3d']
         pts_3d = result_dic['pts_3d']
         keep = scores_3d > args.score_thresh
-
-        plt.figure(figsize=(2, 4))
-        plt.xlim(pc_range[0], pc_range[3])
-        plt.ylim(pc_range[1], pc_range[4])
-        plt.axis('off')
         for pred_score_3d, pred_bbox_3d, pred_label_3d, pred_pts_3d in zip(scores_3d[keep], boxes_3d[keep],labels_3d[keep], pts_3d[keep]):
 
             pred_pts_3d = pred_pts_3d.numpy()
             pts_x = pred_pts_3d[:,0]
             pts_y = pred_pts_3d[:,1]
+            # plt.plot(pts_x, pts_y, color=colors_plt[pred_label_3d],linewidth=1,alpha=0.8,zorder=-1)
+            # plt.scatter(pts_x, pts_y, color=colors_plt[pred_label_3d],s=1,alpha=0.8,zorder=-1)
             plt.plot(pts_x, pts_y, color=colors_plt[pred_label_3d],linewidth=1,alpha=0.8,zorder=-1)
-            plt.scatter(pts_x, pts_y, color=colors_plt[pred_label_3d],s=1,alpha=0.8,zorder=-1)
-
-
-            pred_bbox_3d = pred_bbox_3d.numpy()
-            xy = (pred_bbox_3d[0],pred_bbox_3d[1])
-            width = pred_bbox_3d[2] - pred_bbox_3d[0]
-            height = pred_bbox_3d[3] - pred_bbox_3d[1]
-            pred_score_3d = float(pred_score_3d)
-            pred_score_3d = round(pred_score_3d, 2)
-            s = str(pred_score_3d)
-
-
-
-        plt.imshow(car_img, extent=[-1.2, 1.2, -1.5, 1.5])
-
+            plt.scatter(pts_x, pts_y, color=colors_plt[pred_label_3d],s=0.1,alpha=0.8,zorder=-1)
+        # plt.imshow(car_img, extent=[-1.2, 1.2, -1.5, 1.5])
+        ax.set_title('Inference Result')
+        ax.axis('off')
+        for ax in axs:
+            ax.axis('equal')
+            ax.set_xlim(-25, 25)  # 根据实际数据范围调整
+            ax.set_ylim(-20, 50)  # 
         map_path = osp.join(sample_dir, 'PRED_MAP_plot.png')
+        meta_info = f"md5: {bag_md5}, map1_timestamp: {map1_timestamp}, map2_timestamp: {map2_timestamp}"
+        fig.text(0.5, 0.95, meta_info, ha='center', va='center', fontsize=12)
         plt.savefig(map_path, bbox_inches='tight', format='png',dpi=1200)
         plt.close()
 
-        
         prog_bar.update()
 
     logger.info('\n DONE vis test dataset samples gt label & pred')

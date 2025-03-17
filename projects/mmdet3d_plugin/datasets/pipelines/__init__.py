@@ -2,6 +2,7 @@ from .transform_3d import (
     PadMultiViewImage, NormalizeMultiviewImage, 
     PhotoMetricDistortionMultiViewImage, CustomCollect3D, RandomScaleImageMultiViewImage, CustomPointsRangeFilter)
 from .formating import CustomDefaultFormatBundle3D
+from mmdet.datasets.pipelines import Compose
 
 from .loading import CustomLoadPointsFromFile, CustomLoadPointsFromMultiSweeps, CustomLoadMultiViewImageFromFiles
 __all__ = [

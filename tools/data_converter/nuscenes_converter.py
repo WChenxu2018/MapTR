@@ -48,7 +48,7 @@ def create_nuscenes_infos(root_path,
     from nuscenes.nuscenes import NuScenes
     from nuscenes.can_bus.can_bus_api import NuScenesCanBus
     print(version, root_path)
-    nusc = NuScenes(version=version, dataroot=root_path, verbose=True)
+    nusc = NuScenes(version=version, dataroot='/mnt/data/project/MapTR/data/nuscenes', verbose=True)
     nusc_can_bus = NuScenesCanBus(dataroot=can_bus_root_path)
     from nuscenes.utils import splits
     available_vers = ['v1.0-trainval', 'v1.0-test', 'v1.0-mini']
@@ -401,7 +401,7 @@ def export_2d_annotation(root_path, info_path, version, mono3d=True):
         'CAM_BACK_RIGHT',
     ]
     nusc_infos = mmcv.load(info_path)['infos']
-    nusc = NuScenes(version=version, dataroot=root_path, verbose=True)
+    nusc = NuScenes(version=version, dataroot='/mnt/data/project/MapTR/data/nuscenes', verbose=True)
     # info_2d_list = []
     cat2Ids = [
         dict(id=nus_categories.index(cat_name), name=cat_name)

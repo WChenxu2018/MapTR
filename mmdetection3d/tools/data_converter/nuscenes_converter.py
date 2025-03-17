@@ -40,7 +40,7 @@ def create_nuscenes_infos(root_path,
             Default: 10
     """
     from nuscenes.nuscenes import NuScenes
-    nusc = NuScenes(version=version, dataroot=root_path, verbose=True)
+    nusc = NuScenes(version=version, dataroot='/mnt/data/project/MapTR/data/nuscenes', verbose=True)
     from nuscenes.utils import splits
     available_vers = ['v1.0-trainval', 'v1.0-test', 'v1.0-mini']
     assert version in available_vers
