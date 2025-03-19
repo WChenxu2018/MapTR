@@ -16,7 +16,7 @@ import warnings
 from mmcv import Config, DictAction
 from mmcv.runner import get_dist_info, init_dist
 from os import path as osp
-
+from datetime import datetime
 from mmdet import __version__ as mmdet_version
 from mmdet3d import __version__ as mmdet3d_version
 #from mmdet3d.apis import train_model
@@ -138,7 +138,8 @@ def main():
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
-
+    now = datetime.now()
+    time_str = now.strftime("%H%M%S")
     # work_dir is determined in this priority: CLI > segment in file > filename
     if args.work_dir is not None:
         # update configs according to CLI args if args.work_dir is not None

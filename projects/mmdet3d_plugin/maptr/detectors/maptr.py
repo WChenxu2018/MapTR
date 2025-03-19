@@ -92,9 +92,11 @@ class VectornetExtractor(BaseModule):
         static_input_dims: int = 5,
         embedding_dims: int = 256,
         ff_dims: int = 512,
+        map_num: int = 2,
         output_dims: int = 256,
         static_type_num: int = 3,
         node_num: int = 20,
+        vector_num: int = 10,
         init_cfg: Optional[dict] = None,
         freeze_weights: bool = False,
         freeze_bn_stat: bool = False,
@@ -117,15 +119,19 @@ class VectornetExtractor(BaseModule):
         self.output_dims = output_dims
         self.static_type_num = static_type_num
         self.node_num = node_num
+        self.map_num = map_num
         self.attention_net = build_attention(attention_net)
         self.static_embedding_layer1 = nn.Sequential(
-            nn.Linear(self.static_input_dims-1, self.ff_dims),
+            nn.Linear(self.static_input_dims-2, self.ff_dims),
             nn.ReLU(),
-            nn.Linear(self.ff_dims, self.embedding_dims//2),
+            nn.Linear(self.ff_dims, self.embedding_dims),
         )
         self.type_embedding_layer = nn.Embedding(self.static_type_num, self.embedding_dims//2)
+        
+        self.map_embedding = nn.Embedding(self.map_num, self.embedding_dims//2)
+        
         self.static_embedding_layer2 = nn.Sequential(
-            nn.Linear(self.embedding_dims, self.ff_dims),
+            nn.Linear(2 * self.embedding_dims, self.ff_dims),
             nn.ReLU(),
             nn.Linear(self.ff_dims, self.embedding_dims),         
         )
@@ -144,6 +150,9 @@ class VectornetExtractor(BaseModule):
             nn.BatchNorm2d(self.output_dims//2), 
             nn.ReLU(inplace=True)
         )
+        self.vector_num = vector_num
+        
+        # self.map2_embedding = nn.Embedding(self.vector_num, self.embedding_dims)
 
     def process_input(self,  vectornet_feature_static: torch.Tensor):
         """
@@ -153,8 +162,9 @@ class VectornetExtractor(BaseModule):
             - map_features (B, P, N, self.embedding_dims)
         """        
         static_feature = self.static_embedding_layer1(vectornet_feature_static[...,:4])
-        static_type_embeddings = self.type_embedding_layer(vectornet_feature_static[...,-1].long())
-        static_feature = torch.cat([static_feature, static_type_embeddings], dim=-1)
+        static_type_embeddings = self.type_embedding_layer(vectornet_feature_static[...,-2].long())
+        map_source_type_embeddings = self.map_embedding(vectornet_feature_static[...,-1].long())
+        static_feature = torch.cat([static_feature, static_type_embeddings, map_source_type_embeddings], dim=-1)
         static_feature = self.static_embedding_layer2(static_feature) # B, 80, 8, embedding_dims
         return static_feature
 
@@ -213,18 +223,28 @@ class VectornetExtractor(BaseModule):
             - mask_map (B, 1, 1, P)
         """
         B, P, N = vectornet_mask_static.shape
-        vectornet_feature_static = vectornet_feature_static[:, :, :self.node_num] # B, 80, 8, 5
-        vectornet_mask_static = vectornet_mask_static[:, :, :self.node_num] # B, 80, 8   0代表存在
+        half_P = P // 2
+        vectornet_feature_static_map1 = vectornet_feature_static[:, :half_P, :self.node_num] 
+        vectornet_mask_static_map1 = vectornet_mask_static[:, :half_P, :self.node_num]
+        map1_feature = self.process_input(vectornet_feature_static_map1)
+        subgraph1_output, mask1_static_polyline = self.map_subgraph_network(map1_feature, vectornet_mask_static_map1)
 
-        map_feature = self.process_input(vectornet_feature_static)
-        subgraph_output, mask_static_polyline = self.map_subgraph_network(map_feature, vectornet_mask_static)
+        vectornet_feature_static_map2 = vectornet_feature_static[:, half_P:, :self.node_num]
+        vectornet_mask_static_map2 = vectornet_mask_static[:, half_P:, :self.node_num]
+        map2_feature = self.process_input(vectornet_feature_static_map2)
+        subgraph2_output, mask2_static_polyline = self.map_subgraph_network(map2_feature, vectornet_mask_static_map2)
+        
+        subgraph_output = torch.cat((subgraph1_output, subgraph2_output), dim = 1)
+        mask_static_polyline = torch.cat((mask1_static_polyline, mask2_static_polyline), dim = 1)
 
         enc_feat_static = self.attention_net(
             subgraph_output, mask_static_polyline
         )
+        # enc_feat_static = enc_feat_static.squeeze(-1).permute(0, 2, 1)
+        # mask_static_polyline = mask_static_polyline.squeeze(-1).permute(0, 2, 1)
 
         
-        return enc_feat_static
+        return enc_feat_static, mask_static_polyline
 
 
 @DETECTORS.register_module()
@@ -335,13 +355,15 @@ class MapFusionTR(MVXTwoStageDetector):
 
     def forward_pts_train(self,
                           map_feature,
+                          map_mask,
                           gt_bboxes_3d,
                           gt_labels_3d):
 
 
-        outs = self.pts_bbox_head(map_feature)
+        outs = self.pts_bbox_head(map_feature, map_mask)
         loss_inputs = [gt_bboxes_3d, gt_labels_3d, outs]
         losses = self.pts_bbox_head.loss(*loss_inputs)
+        # print(losses.item())
         return losses
 
     def forward_dummy(self, img):
@@ -424,10 +446,10 @@ class MapFusionTR(MVXTwoStageDetector):
         input_map = torch.cat((model_input_map1, model_input_map2), dim = 1)
         input_map_mask = torch.cat((model_input_map1_mask, model_input_map2_mask), dim = 1)
 
-        map_feature = self.vector_backbone(input_map, input_map_mask)
+        map_feature, map_mask = self.vector_backbone(input_map, input_map_mask)
 
         losses = dict()
-        losses_pts = self.forward_pts_train(map_feature, gt_bboxes_3d,
+        losses_pts = self.forward_pts_train(map_feature, map_mask, gt_bboxes_3d,
                                             gt_labels_3d)
 
         losses.update(losses_pts)
@@ -447,9 +469,11 @@ class MapFusionTR(MVXTwoStageDetector):
                       **kwargs):
         input_map = torch.cat((model_input_map1, model_input_map2), dim = 1)
         input_map_mask = torch.cat((model_input_map1_mask, model_input_map2_mask), dim = 1)
-        map_feature = self.vector_backbone(input_map, input_map_mask)
-        outs = self.pts_bbox_head(map_feature)
+        map_feature, map_mask = self.vector_backbone(input_map, input_map_mask)
+        outs = self.pts_bbox_head(map_feature, map_mask)
         
+        loss_inputs = [gt_bboxes_3d, gt_labels_3d, outs]
+        losses = self.pts_bbox_head.loss(*loss_inputs)
         # print("outs ", outs)
         ### hack         bbox_list_output = [dict() for i in range(len(meta))]
         bbox_list_output = [dict()]

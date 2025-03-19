@@ -154,9 +154,9 @@ def main():
 
     # build the model and load checkpoint
     # import pdb;pdb.set_trace()
-    cfg.model.train_cfg = None
+    # cfg.model.train_cfg = None
     # cfg.model.pts_bbox_head.bbox_coder.max_num=15 # TODO this is a hack
-    model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
+    model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'), train_cfg=cfg.get('train_cfg'))
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
@@ -212,6 +212,8 @@ def main():
 
         timestamp = metas[0]['timestamp']
         bag_md5 = metas[0]['bag_md5']
+        # if bag_md5!="2b897183fc922b3657725d9ec156d5ce":
+        #     continue
         map1_timestamp = metas[0]['map1_timestamp']
         map2_timestamp = metas[0]['map2_timestamp']
 
@@ -223,14 +225,16 @@ def main():
             result = model(return_loss=False, model_input_map1 = data['model_input_map1'],
                            model_input_map2 = data['model_input_map2'], 
                            model_input_map1_mask = data['model_input_map1_mask'],
-                           model_input_map2_mask = data['model_input_map2_mask'])
+                           model_input_map2_mask = data['model_input_map2_mask'],
+                           gt_bboxes_3d = data['gt_bboxes_3d'],
+                           gt_labels_3d = data['gt_labels_3d'])
         sample_dir = osp.join(args.show_dir, bag_md5, str(timestamp))
         mmcv.mkdir_or_exist(osp.abspath(sample_dir))
-        fig, axs = plt.subplots(1, 5, figsize=(20, 5), gridspec_kw={'width_ratios': [1, 4, 4, 4, 4]})
+        fig, axs = plt.subplots(1, 5, figsize=(20, 8), gridspec_kw={'width_ratios': [1, 4, 4, 4, 4]}, sharey=True)
 
         # 坐标轴设置
         ax = axs[0]
-        start, end = -20, 40  # y 轴范围
+        start, end = -40, 40  # y 轴范围
         ax.plot([0, 0], [start, end], 'k-', lw=2)  # 绘制主刻度线
 
         # 标记刻度
@@ -260,12 +264,15 @@ def main():
             ys = np.array(ys)
             ax.plot(xs, ys, color=colors_plt[line_type], linewidth=1, alpha=0.8, zorder=-1)
             ax.scatter(xs, ys, color=colors_plt[line_type], s=10, alpha=0.8, zorder=-1)
-        ax.set_title(f'Input Image 1 {timestamp}')
-        ax.axis('off')
+        ax.set_title(f'Input Image 1')
+        ax.axis('equal')
+        ax.set_xlim(-25, 25)
+        ax.set_ylim(-40, 40)
+        ax.grid(True)
+        # ax.axis('off')
 
         # 输入图像2
         ax = axs[2]
-        debug_info = []
         for line_index in range(0, data['model_input_map2'].shape[1]):
             xs = []
             ys = []
@@ -279,20 +286,17 @@ def main():
                 ys.append(y_point)
             if len(xs) == 0:
                 continue
-            debug_info.append({
-                "type": line_type,
-                "xs": xs,
-                "ys": ys
-            })
+
             xs = np.array(xs)
             ys = np.array(ys)
             ax.plot(xs, ys, color=colors_plt[line_type], linewidth=1, alpha=0.8, zorder=-1)
             ax.scatter(xs, ys, color=colors_plt[line_type], s=10, alpha=0.8, zorder=-1)
         ax.set_title('Input Image 2')
-        ax.axis('off')
-        import json
-        with open("test.json", 'w') as fout:
-            json.dump(debug_info, fout, indent=4)
+        ax.axis('equal')
+        ax.set_xlim(-25, 25)
+        ax.set_ylim(-40, 40)
+        ax.grid(True)
+        # ax.axis('off')
 
         ax = axs[3]
         # gt_bboxes_3d[0].fixed_num=30 #TODO, this is a hack
@@ -307,7 +311,11 @@ def main():
             # plt.plot(x, y, color=colors_plt[gt_label_3d])
             # plt.scatter(x, y, color=colors_plt[gt_label_3d],s=1)
         ax.set_title('Ground Truth')
-        ax.axis('off')
+        ax.axis('equal')
+        ax.set_xlim(-25, 25)
+        ax.set_ylim(-40, 40)
+        ax.grid(True)
+        # ax.axis('off')
 
         ax = axs[4]
         # visualize pred
@@ -329,13 +337,18 @@ def main():
             plt.scatter(pts_x, pts_y, color=colors_plt[pred_label_3d],s=0.1,alpha=0.8,zorder=-1)
         # plt.imshow(car_img, extent=[-1.2, 1.2, -1.5, 1.5])
         ax.set_title('Inference Result')
-        ax.axis('off')
-        for ax in axs:
-            ax.axis('equal')
-            ax.set_xlim(-25, 25)  # 根据实际数据范围调整
-            ax.set_ylim(-20, 50)  # 
+        ax.axis('equal')
+        ax.set_xlim(-25, 25)
+        ax.set_ylim(-40, 40)
+        ax.grid(True)
+        # ax.axis('off')
+        # for ax in axs:
+        #     ax.axis('equal')
+        #     ax.set_xlim(-25, 25)  # 根据实际数据范围调整
+        #     ax.set_ylim(-40, 40)  # 
         map_path = osp.join(sample_dir, 'PRED_MAP_plot.png')
         meta_info = f"md5: {bag_md5}, map1_timestamp: {map1_timestamp}, map2_timestamp: {map2_timestamp}"
+        print("meta_info ", meta_info)
         fig.text(0.5, 0.95, meta_info, ha='center', va='center', fontsize=12)
         plt.savefig(map_path, bbox_inches='tight', format='png',dpi=1200)
         plt.close()

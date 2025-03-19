@@ -255,9 +255,15 @@ class MapTRNMSFreeCoder(BaseBBoxCoder):
             }
 
         else:
-            raise NotImplementedError(
-                'Need to reorganize output as a batch, only '
-                'support post_center_range is not None for now!')
+        #     raise NotImplementedError(
+        #         'Need to reorganize output as a batch, only '
+        #         'support post_center_range is not None for now!')
+            predictions_dict = {
+                'bboxes': final_box_preds,
+                'scores': final_scores,
+                'labels': final_preds,
+                'pts': final_pts_preds,
+            }
         return predictions_dict
 
     def decode(self, preds_dicts):

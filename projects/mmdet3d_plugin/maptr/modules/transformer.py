@@ -30,6 +30,118 @@ class ConvFuser(nn.Sequential):
         return super().forward(torch.cat(inputs, dim=1))
 
 @TRANSFORMER.register_module()
+class MapFusionTRPerceptionTransformer2(BaseModule):
+    """Implements the Detr3D transformer.
+    Args:
+        as_two_stage (bool): Generate query from encoder features.
+            Default: False.
+        num_feature_levels (int): Number of feature maps from FPN:
+            Default: 4.
+        two_stage_num_proposals (int): Number of proposals when set
+            `as_two_stage` as True. Default: 300.
+    """
+
+    def __init__(self,
+                 num_feature_levels=4,
+                 num_cams=6,
+                 two_stage_num_proposals=300,
+                 fuser=None,
+                 encoder=None,
+                 decoder=None,
+                 embed_dims=256,
+                 rotate_prev_bev=True,
+                 use_shift=True,
+                 use_can_bus=True,
+                 len_can_bus=18,
+                 can_bus_norm=True,
+                 use_cams_embeds=True,
+                 rotate_center=[100, 100],
+                 modality='vision',
+                 **kwargs):
+        super(MapFusionTRPerceptionTransformer2, self).__init__(**kwargs)
+        if modality == 'fusion':
+            self.fuser = build_fuser(fuser) #TODO
+        self.use_attn_bev = encoder['type'] == 'BEVFormerEncoder'
+        self.encoder = build_transformer_layer_sequence(encoder)
+        self.decoder = build_transformer_layer_sequence(decoder)
+        self.embed_dims = embed_dims
+        self.num_feature_levels = num_feature_levels
+        self.num_cams = num_cams
+        self.fp16_enabled = False
+
+        self.rotate_prev_bev = rotate_prev_bev
+        self.use_shift = use_shift
+        self.use_can_bus = use_can_bus
+        self.len_can_bus = len_can_bus
+        self.can_bus_norm = can_bus_norm
+        self.use_cams_embeds = use_cams_embeds
+
+        self.two_stage_num_proposals = two_stage_num_proposals
+        self.init_layers()
+        self.rotate_center = rotate_center
+
+    def init_layers(self):
+        """Initialize layers of the Detr3DTransformer."""
+        self.level_embeds = nn.Parameter(torch.Tensor(
+            self.num_feature_levels, self.embed_dims))
+        self.cams_embeds = nn.Parameter(
+            torch.Tensor(self.num_cams, self.embed_dims))
+        self.reference_points = nn.Linear(self.embed_dims, 2) # TODO, this is a hack
+        self.can_bus_mlp = nn.Sequential(
+            nn.Linear(self.len_can_bus, self.embed_dims // 2),
+            nn.ReLU(inplace=True),
+            nn.Linear(self.embed_dims // 2, self.embed_dims),
+            nn.ReLU(inplace=True),
+        )
+        if self.can_bus_norm:
+            self.can_bus_mlp.add_module('norm', nn.LayerNorm(self.embed_dims))
+
+    def init_weights(self):
+        """Initialize the transformer weights."""
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        for m in self.modules():
+            if isinstance(m, MSDeformableAttention3D) or isinstance(m, TemporalSelfAttention) \
+                    or isinstance(m, CustomMSDeformableAttention):
+                try:
+                    m.init_weight()
+                except AttributeError:
+                    m.init_weights()
+        normal_(self.level_embeds)
+        normal_(self.cams_embeds)
+        xavier_init(self.reference_points, distribution='uniform', bias=0.)
+        xavier_init(self.can_bus_mlp, distribution='uniform', bias=0.)
+
+    def forward(self,
+                map_feature,
+                map_mask,
+                object_query_embed,
+                *args,
+                **kwargs):
+
+        bev_embed = map_feature
+        bs = map_feature.shape[0]
+        query_pos, query = torch.split(
+            object_query_embed, self.embed_dims, dim=1) #object_query_embed: torch.Size([1000, 512]) self.embed_dims:256
+        query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)
+        query = query.unsqueeze(0).expand(bs, -1, -1)
+
+        query = query.permute(1, 0, 2)
+        query_pos = query_pos.permute(1, 0, 2)
+        bev_embed = bev_embed.permute(1, 0, 2)
+        map_mask = map_mask.squeeze(2)
+        inter_states = self.decoder(
+            query=query, #torch.Size([1000, 4, 256])
+            key=bev_embed,
+            value=bev_embed,
+            key_padding_mask=map_mask, #torch.Size([20000, 4, 256])
+            query_pos=query_pos #torch.Size([1000, 4, 256])
+        )
+        return inter_states
+
+
+@TRANSFORMER.register_module()
 class MapFusionTRPerceptionTransformer(BaseModule):
     """Implements the Detr3D transformer.
     Args:

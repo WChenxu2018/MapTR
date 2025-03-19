@@ -57,19 +57,23 @@ model = dict(
     pretrained=dict(img='ckpts/resnet50-19c8e357.pth'),
     vector_backbone=dict(
         type='VectornetExtractor',
-        static_input_dims = 5,
+        static_input_dims = 6,
         node_num = 20,
+        vector_num = 4,
+        embedding_dims = 128,
+        ff_dims = 256,
+        map_num =2,
         attention_net=dict(
             type="StaticAttentionNet",
             gnn_encoder_layer_num=1,
             map_gnn_dim=256,
         )),
     pts_bbox_head=dict(
-        type='MapFusionTRHead',
+        type='MapFusionTRHead2',
         bev_h=bev_h_,
         bev_w=bev_w_,
         num_query=900,
-        num_vec=32,
+        num_vec=4,
         num_pts_per_vec=fixed_ptsnum_per_pred_line, # one bbox
         num_pts_per_gt_vec=fixed_ptsnum_per_gt_line,
         dir_interval=1,
@@ -84,7 +88,7 @@ model = dict(
         code_size=2,
         code_weights=[1.0, 1.0, 1.0, 1.0],
         transformer=dict(
-            type='MapFusionTRPerceptionTransformer',
+            type='MapFusionTRPerceptionTransformer2',
             rotate_prev_bev=True,
             use_shift=True,
             use_can_bus=True,
@@ -120,33 +124,42 @@ model = dict(
                     operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
                                      'ffn', 'norm'))),
             decoder=dict(
-                type='MapTRDecoder',
+                type='MapFusionTransformerDecoder',
                 num_layers=6,
                 return_intermediate=True,
+                # transformerlayers=dict(
+                #     type='TransformerDecoderLayer',
+                #     embed_dims=_dim_,
+                #     nhead=8,
+                #     dropout=0.1,
+                #     dim_feedforward=2048,
+                #     normalize_before=True)
                 transformerlayers=dict(
-                    type='DetrTransformerDecoderLayer',
+                    type='MapFusionTransformerDecoderLayer',
                     attn_cfgs=[
                         dict(
                             type='MultiheadAttention',
                             embed_dims=_dim_,
                             num_heads=8,
                             dropout=0.1),
-                         dict(
-                            type='CustomMSDeformableAttention',
+                        dict(
+                            type='MultiheadAttention',
                             embed_dims=_dim_,
-                            num_levels=1),
+                            num_heads=8,
+                            dropout=0.1)
                     ],
-
                     feedforward_channels=_ffn_dim_,
                     ffn_dropout=0.1,
                     operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
-                                     'ffn', 'norm')))),
+                                     'ffn', 'norm'))
+                )
+        ),
         bbox_coder=dict(
             type='MapTRNMSFreeCoder',
             # post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
             # post_center_range=[-20, -35, -20, -35, 20, 35, 20, 35],
             pc_range=point_cloud_range,
-            max_num=50,
+            max_num=10,
             voxel_size=voxel_size,
             num_classes=num_map_classes),
         positional_encoding=dict(
@@ -188,14 +201,14 @@ dataset_type = 'BevFusionMapDataset'
 data_root = 'data/mapfusion/maps'
 file_client_args = dict(backend='disk')
 
-
+load_features=['road_border']
 train_pipeline = [
-    dict(type='LoadMapFile', line_num = 32, node_num=30)
+    dict(type='LoadMapFile', line_num = 4, node_num=30, load_features=load_features)
 ]
 
 
 test_pipeline = [
-    dict(type='LoadMapFile', line_num = 32, node_num=30)
+    dict(type='LoadMapFile', line_num = 4, node_num=30, load_features=load_features)
 ] 
 data = dict(
     samples_per_gpu=8,
@@ -203,6 +216,7 @@ data = dict(
     train=dict(
         type=dataset_type,
         root_dir=data_root,
+        load_features=load_features,
         pipeline=train_pipeline,
         bev_size=(bev_h_, bev_w_),
         pc_range=point_cloud_range,
@@ -212,6 +226,7 @@ data = dict(
     val=dict(type=dataset_type,
              root_dir=data_root,
               pipeline=test_pipeline, 
+              load_features=load_features,
               bev_size=(bev_h_, bev_w_),
               pc_range=point_cloud_range,
               fixed_ptsnum_per_line=fixed_ptsnum_per_gt_line,
@@ -219,6 +234,7 @@ data = dict(
     test=dict(type=dataset_type,
               root_dir=data_root,
               pipeline=test_pipeline, 
+              load_features=load_features,
               bev_size=(bev_h_, bev_w_),
               pc_range=point_cloud_range,
               fixed_ptsnum_per_line=fixed_ptsnum_per_gt_line,
@@ -244,7 +260,7 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
-total_epochs = 100
+total_epochs = 200
 # total_epochs = 50
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)

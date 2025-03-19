@@ -332,8 +332,10 @@ class RandomScaleImageMultiViewImage(object):
 
 @PIPELINES.register_module()
 class LoadMapFile(object):
-    def __init__(self):
-        pass
+    def __init__(self, line_num, node_num, load_features):
+        self.line_num = line_num
+        self.node_num = node_num
+        self.load_features = load_features
 
     def __call__(self, results):
         """Call function to collect keys in results. The keys in ``meta_keys``
@@ -347,17 +349,17 @@ class LoadMapFile(object):
         """
 
         ret = {}
-        ret['model_input_map1'], ret['model_input_map1_mask'] = self.convert_lines_to_tensor(results['model_input_map1'])
-        ret['model_input_map2'], ret['model_input_map2_mask'] = self.convert_lines_to_tensor(results['model_input_map2'])
+        ret['model_input_map1'], ret['model_input_map1_mask'] = self.convert_lines_to_tensor(results['model_input_map1'], map_source = 0)
+        ret['model_input_map2'], ret['model_input_map2_mask'] = self.convert_lines_to_tensor(results['model_input_map2'], map_source = 1)
         ret['meta'] = DC(results['meta'])
         return ret
         
-    def convert_lines_to_tensor(self, results):
+    def convert_lines_to_tensor(self, results, map_source):
         # 初始化维度为 [30, 20, 5] 的数据张量
-        tensor = torch.zeros((30, 20, 5), dtype=torch.float32)
+        tensor = torch.zeros((self.line_num, self.node_num, 6), dtype=torch.float32)
         
         # 初始化与数据张量相同大小的掩码张量
-        mask = torch.zeros((30, 20), dtype=torch.float32)  # 掩码只有前两个维度
+        mask = torch.zeros((self.line_num, self.node_num), dtype=torch.float32)  # 掩码只有前两个维度
         
         CLASS2LABEL = {
             'road_border': 0,
@@ -365,12 +367,20 @@ class LoadMapFile(object):
             'lane_center': 2,
             'others': -1
         }
-        for i, line in enumerate(results[:30]):  # 限制最多30条线
+        filter_results = []
+        for i, line in enumerate(results):
+            points = line['points']
+            line_type = line['type']
+            if line_type not in self.load_features:
+                continue
+            filter_results.append(line)
+            
+        for i, line in enumerate(filter_results[:self.line_num]):  # 限制最多30条线
             points = line['points']
             line_type = line['type']
             line_class = CLASS2LABEL.get(line_type, -1)
 
-            num_points = min(len(points) - 1, 20)  # 最多支持20个点，并且要至少有两个点来确定线段
+            num_points = min(len(points) - 1, self.node_num)  # 最多支持20个点，并且要至少有两个点来确定线段
             
             for j in range(num_points):
                 start_point = points[j]
@@ -381,7 +391,8 @@ class LoadMapFile(object):
                 tensor[i, j, 2] = end_point[0]    # 终止点 x
                 tensor[i, j, 3] = end_point[1]    # 终止点 y
                 tensor[i, j, 4] = line_class      # 线的类别
-                
+                tensor[i, j, 5] = map_source      # 线的类别
+
                 # 对应位置设置掩码值为1，表示这是有效数据
                 mask[i, j] = 1.0
         

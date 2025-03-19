@@ -903,6 +903,7 @@ class BevFusionMapDataset(Dataset):
                  root_dir = None,
                  queue_length=4, 
                  bev_size=(200, 200),
+                 load_features=[],
                  pc_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
                  filter_empty_gt = True,
                  fixed_ptsnum_per_line = -1,
@@ -915,6 +916,7 @@ class BevFusionMapDataset(Dataset):
         self.CLASSES = ('car', 'truck', 'trailer', 'bus', 'construction_vehicle',
                'bicycle', 'motorcycle', 'pedestrian', 'traffic_cone',
                'barrier')
+        self.load_features = load_features
         self.filter_empty_gt = filter_empty_gt
         self.test_mode = test_mode
         self.root_dir = root_dir
@@ -941,12 +943,33 @@ class BevFusionMapDataset(Dataset):
 
     def load_train_file_info(self):
         ret = []
+        target_dataset = None
+        data = None
+        data = [
+            {
+                "bag_md5": "2b897183fc922b3657725d9ec156d5ce",
+                "timestamp":[1713252551438676, 1713252554538673, 1713252557638670,
+                             1713252560738667, 1713252565038663]
+            }
+        ]
+        if data is not None:
+            target_dataset = {}
+            for m in data:
+                md5, timestamps = m['bag_md5'], m['timestamp']
+                target_dataset[md5] = timestamps
         for bag_md5 in os.listdir(self.root_dir):
+            if target_dataset is not None:
+                if bag_md5 not in target_dataset:
+                    continue
             bag_train_info_path = f'{self.root_dir}/{bag_md5}/train_info.json'
             with open(bag_train_info_path) as f:
                 bag_train_info = json.load(f)
 
             for meta in bag_train_info:
+                if target_dataset is not None:
+                    train_timestamp = meta['meta']['timestamp']
+                    if train_timestamp not in target_dataset[bag_md5]:
+                        continue
                 single_meta = {
                     "model_input_map1": [],
                     "model_input_map2": [],
@@ -1001,6 +1024,8 @@ class BevFusionMapDataset(Dataset):
         vectors = []
         for line_instance in input_dict['model_output_map']:
             line_type = line_instance['type']
+            if line_type not in self.load_features:
+                continue
             line_points = line_instance['points']
             
             

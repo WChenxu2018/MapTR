@@ -11,7 +11,7 @@
             "args": [
                 // "--nproc_per_node=0", // 根据具体需求修改GPU数量
                 // "--master_port=28509", // 使用的端口，默认可以这样或根据需要更改
-                "/mnt/data/project/MapTR/projects/configs/maptr/bev_vector_fusion.py", // CONFIG 参数
+                "/mnt/data/project/MapTR/projects/configs/maptr/bev_vector_fusion_simple.py" // CONFIG 参数
                 // "/mnt/data/project/MapTR/projects/configs/maptr/maptr_tiny_r50_24e.py", // CONFIG 参数
                 // "--launcher", "pytorch", // 指定 launcher 类型
                 // "--deterministic" // 确保确定性
@@ -35,8 +35,8 @@
             "args": [
                 // "--nproc_per_node=0", // 根据具体需求修改GPU数量
                 // "--master_port=28509", // 使用的端口，默认可以这样或根据需要更改
-                "/mnt/data/project/MapTR/projects/configs/maptr/bev_vector_fusion.py", // CONFIG 参数
-                "/mnt/data/project/MapTR/work_dirs/bev_vector_fusion/epoch_50.pth",
+                "/mnt/data/project/MapTR/projects/configs/maptr/bev_vector_fusion_simple.py", // CONFIG 参数
+                "/mnt/data/project/MapTR/work_dirs/bev_vector_fusion_simple/epoch_100.pth",
                 // "/mnt/data/project/MapTR/projects/configs/maptr/maptr_tiny_r50_24e.py", // CONFIG 参数
                 // "/mnt/data/project/MapTR/work_dirs/maptr_tiny_r50_24e/epoch_5.pth"
                 // "--launcher", "pytorch", // 指定 launcher 类型
