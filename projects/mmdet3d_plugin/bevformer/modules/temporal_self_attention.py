@@ -126,13 +126,13 @@ class TemporalSelfAttention(BaseModule):
         self._is_init = True
 
     def forward(self,
-                query,
+                query, #torch.Size([4, 20000, 256])
                 key=None,
                 value=None,
                 identity=None,
                 query_pos=None,
                 key_padding_mask=None,
-                reference_points=None,
+                reference_points=None, #torch.Size([8, 20000, 1, 2])
                 spatial_shapes=None,
                 level_start_index=None,
                 flag='decoder',
@@ -269,4 +269,4 @@ class TemporalSelfAttention(BaseModule):
         if not self.batch_first:
             output = output.permute(1, 0, 2)
 
-        return self.dropout(output) + identity
+        return self.dropout(output) + identity #torch.Size([4, 20000, 256])

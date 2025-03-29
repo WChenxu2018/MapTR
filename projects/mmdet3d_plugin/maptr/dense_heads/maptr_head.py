@@ -1627,15 +1627,15 @@ class MapTRHead(DETRHead):
         if self.query_embed_type == 'all_pts':
             object_query_embeds = self.query_embedding.weight.to(dtype)
         elif self.query_embed_type == 'instance_pts':
-            pts_embeds = self.pts_embedding.weight.unsqueeze(0)
-            instance_embeds = self.instance_embedding.weight.unsqueeze(1)
-            object_query_embeds = (pts_embeds + instance_embeds).flatten(0, 1).to(dtype)
-        if self.bev_embedding is not None:
-            bev_queries = self.bev_embedding.weight.to(dtype)
+            pts_embeds = self.pts_embedding.weight.unsqueeze(0) #torch.Size([1, 20, 512])
+            instance_embeds = self.instance_embedding.weight.unsqueeze(1) #torch.Size([50, 1, 512])
+            object_query_embeds = (pts_embeds + instance_embeds).flatten(0, 1).to(dtype) #torch.Size([1000, 512])
+        if self.bev_embedding is not None: #Embedding(20000, 256)
+            bev_queries = self.bev_embedding.weight.to(dtype) #torch.Size([20000, 256])
 
-            bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
+            bev_mask = torch.zeros((bs, self.bev_h, self.bev_w), #torch.Size([4, 200, 100])
                                 device=bev_queries.device).to(dtype)
-            bev_pos = self.positional_encoding(bev_mask).to(dtype)
+            bev_pos = self.positional_encoding(bev_mask).to(dtype) #torch.Size([4, 256, 200, 100])
         else:
             bev_queries = None
             bev_mask = None

@@ -121,18 +121,18 @@ class GeometrySptialCrossAttention(BaseModule):
 
         bs, num_query, _ = query.size()
 
-        D = reference_points_cam.size(3)
+        D = reference_points_cam.size(3) #torch.Size([6, 4, 20000, 4, 2]) [num_cams, B, h*w, pillar, xy]
         indexes = []
-        for i, mask_per_img in enumerate(bev_mask):
-            index_query_per_img = mask_per_img[0].sum(-1).nonzero().squeeze(-1)
+        for i, mask_per_img in enumerate(bev_mask): #torch.Size([6, 4, 20000, 4])
+            index_query_per_img = mask_per_img[0].sum(-1).nonzero().squeeze(-1) #这里为什么取第一个batch的mask
             indexes.append(index_query_per_img)
         max_len = max([len(each) for each in indexes])
 
         # each camera only interacts with its corresponding BEV queries. This step can  greatly save GPU memory.
         queries_rebatch = query.new_zeros(
-            [bs, self.num_cams, max_len, self.embed_dims])
+            [bs, self.num_cams, max_len, self.embed_dims]) #torch.Size([4, 6, 7150, 256]) 通过mask做了一次reshape，减少计算量
         reference_points_rebatch = reference_points_cam.new_zeros(
-            [bs, self.num_cams, max_len, D, 2])
+            [bs, self.num_cams, max_len, D, 2]) #torch.Size([4, 6, 7150, 4, 2])
 
         for j in range(bs):
             for i, reference_points_per_img in enumerate(reference_points_cam):
@@ -145,15 +145,15 @@ class GeometrySptialCrossAttention(BaseModule):
         num_cams, l, bs, embed_dims = key.shape
 
         key = key.permute(2, 0, 1, 3).reshape(
-            bs * self.num_cams, l, self.embed_dims)
+            bs * self.num_cams, l, self.embed_dims) #torch.Size([24, 375, 256]) [B*C,H*W, D]
         value = value.permute(2, 0, 1, 3).reshape(
-            bs * self.num_cams, l, self.embed_dims)
+            bs * self.num_cams, l, self.embed_dims) #torch.Size([24, 375, 256]) [B*C,H*W, D]
 
         queries = self.attention(query=queries_rebatch.view(bs*self.num_cams, max_len, self.embed_dims), key=key, value=value,
                                  reference_points=reference_points_rebatch.view(bs*self.num_cams, max_len, D, 2), spatial_shapes=spatial_shapes,
                                  level_start_index=level_start_index).view(bs, self.num_cams, max_len, self.embed_dims)
-        for j in range(bs):
-            for i, index_query_per_img in enumerate(indexes):
+        for j in range(bs): #queries：torch.Size([4, 6, 7150, 256])
+            for i, index_query_per_img in enumerate(indexes): #当前batch每个相机的有效index
                 slots[j, index_query_per_img] += queries[j,
                                                          i, :len(index_query_per_img)]
 

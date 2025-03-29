@@ -621,9 +621,9 @@ class MapTR(MVXTwoStageDetector):
     def extract_feat(self, img, img_metas=None, len_queue=None):
         """Extract features from images and points."""
 
-        img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
+        img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue) #img: torch.Size([4, 6, 3, 480, 800])
         
-        return img_feats
+        return img_feats #torch.Size([4, 6, 256, 15, 25])
 
 
     def forward_pts_train(self,

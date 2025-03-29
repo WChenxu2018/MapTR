@@ -948,8 +948,8 @@ class BevFusionMapDataset(Dataset):
         data = [
             {
                 "bag_md5": "2b897183fc922b3657725d9ec156d5ce",
-                "timestamp":[1713252551438676, 1713252554538673, 1713252557638670,
-                             1713252560738667, 1713252565038663]
+                "timestamp":[1713252551438676, 1713252565038663]
+                # "timestamp":[1713252565038663]
             }
         ]
         if data is not None:

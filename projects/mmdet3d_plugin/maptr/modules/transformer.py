@@ -545,9 +545,9 @@ class MapTRPerceptionTransformer(BaseModule):
             bev_pos=None,
             prev_bev=None,
             **kwargs):
-        bs = mlvl_feats[0].size(0)
+        bs = mlvl_feats[0].size(0) #torch.Size([4, 6, 256, 15, 25])
         bev_queries = bev_queries.unsqueeze(1).repeat(1, bs, 1)#torch.Size([20000, 4, 256])
-        bev_pos = bev_pos.flatten(2).permute(2, 0, 1)
+        bev_pos = bev_pos.flatten(2).permute(2, 0, 1) #torch.Size([20000, 4, 256])
 
         # obtain rotation angle and shift with ego motion
         delta_x = np.array([each['can_bus'][0]
@@ -589,24 +589,24 @@ class MapTRPerceptionTransformer(BaseModule):
         can_bus = bev_queries.new_tensor(
             [each['can_bus'] for each in kwargs['img_metas']])  # [:, :]
         can_bus = self.can_bus_mlp(can_bus[:, :self.len_can_bus])[None, :, :]
-        bev_queries = bev_queries + can_bus * self.use_can_bus
+        bev_queries = bev_queries + can_bus * self.use_can_bus #应该就是融合了自车一些参数的信息
 
         feat_flatten = []
         spatial_shapes = []
         for lvl, feat in enumerate(mlvl_feats):
             bs, num_cam, c, h, w = feat.shape
             spatial_shape = (h, w)
-            feat = feat.flatten(3).permute(1, 0, 3, 2)
+            feat = feat.flatten(3).permute(1, 0, 3, 2) #torch.Size([6, 4, 375, 256])
             if self.use_cams_embeds:
-                feat = feat + self.cams_embeds[:, None, None, :].to(feat.dtype)
+                feat = feat + self.cams_embeds[:, None, None, :].to(feat.dtype) #加了相机的embedding
             feat = feat + self.level_embeds[None,
-                                            None, lvl:lvl + 1, :].to(feat.dtype)
+                                            None, lvl:lvl + 1, :].to(feat.dtype) #层数的embedding
             spatial_shapes.append(spatial_shape)
             feat_flatten.append(feat)
 
         feat_flatten = torch.cat(feat_flatten, 2)
         spatial_shapes = torch.as_tensor(
-            spatial_shapes, dtype=torch.long, device=bev_pos.device)
+            spatial_shapes, dtype=torch.long, device=bev_pos.device) #tensor([[15, 25]], device='cuda:0')
         level_start_index = torch.cat((spatial_shapes.new_zeros(
             (1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
@@ -615,13 +615,13 @@ class MapTRPerceptionTransformer(BaseModule):
 
         bev_embed = self.encoder(
             bev_queries, #torch.Size([20000, 4, 256])
-            feat_flatten,#torch.Size([6, 375, 4, 256])
+            feat_flatten,#torch.Size([6, 375, 4, 256]) #就是对image做了一些相机的embedding
             feat_flatten,
             bev_h=bev_h,
             bev_w=bev_w,
             bev_pos=bev_pos,#torch.Size([20000, 4, 256])
             spatial_shapes=spatial_shapes,
-            level_start_index=level_start_index,
+            level_start_index=level_start_index, #每一层层数开始的地方
             prev_bev=prev_bev,
             shift=shift,
             **kwargs
@@ -734,14 +734,14 @@ class MapTRPerceptionTransformer(BaseModule):
         """
 
         bev_embed = self.get_bev_features(
-            mlvl_feats,
-            lidar_feat,
-            bev_queries,
-            bev_h,
-            bev_w,
-            grid_length=grid_length,
-            bev_pos=bev_pos,
-            prev_bev=prev_bev,
+            mlvl_feats, #torch.Size([4, 6, 256, 15, 25])
+            lidar_feat, #none
+            bev_queries, #torch.Size([20000, 256])
+            bev_h, #200
+            bev_w, #100
+            grid_length=grid_length, #(0.3, 0.3)
+            bev_pos=bev_pos, #torch.Size([4, 256, 200, 100])
+            prev_bev=prev_bev, #none
             **kwargs)  # bev_embed shape: bs, bev_h*bev_w, embed_dims
 
         bs = mlvl_feats[0].size(0)
